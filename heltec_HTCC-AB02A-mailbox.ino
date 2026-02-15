@@ -1,16 +1,26 @@
-#include "LoRaWan_APP.h"  // Heltec CubeCell library
+#include "LoRaWan_APP.h"
 #include "Arduino.h"
 
-// CubeCell GPIO pins (check your specific board)
 #define REED_HATCH_PIN  GPIO1
 #define REED_DOOR_PIN   GPIO2
 
 // LoRa configuration (Italy 868 MHz)
-#define LORA_FREQUENCY  868000000UL // Hz
-#define LORA_SF         7           // Spreading Factor 7
-#define LORA_BW         0           // Bandwidth 125 kHz
-#define LORA_CR         1           // Coding Rate 4/5
-#define LORA_POWER      22          // dBm (EU868 legal max: 25, device max: 22)
+#define RF_FREQUENCY                                868000000 // Hz
+#define TX_OUTPUT_POWER                             22        // dBm
+#define LORA_BANDWIDTH                              0         // [0: 125 kHz,
+                                                              //  1: 250 kHz,
+                                                              //  2: 500 kHz,
+                                                              //  3: Reserved]
+#define LORA_SPREADING_FACTOR                       8         // [SF7..SF12]
+#define LORA_CODINGRATE                             4         // [1: 4/5,
+                                                              //  2: 4/6,
+                                                              //  3: 4/7,
+                                                              //  4: 4/8]
+#define LORA_PREAMBLE_LENGTH                        8         // Same for Tx and Rx
+#define LORA_SYMBOL_TIMEOUT                         0         // Symbols
+#define LORA_FIX_LENGTH_PAYLOAD_ON                  false
+#define LORA_IQ_INVERSION_ON                        false
+#define TX_TIMEOUT_VALUE                            3000
 
 // Mailbox states
 volatile bool hatch_changed = false;
@@ -19,6 +29,10 @@ bool last_hatch_state = HIGH;
 bool last_door_state = HIGH;
 uint32_t last_event_time = 0;
 const uint32_t DEBOUNCE_MS = 300;  // 300ms debounce (allows 0.3s events)
+
+static RadioEvents_t RadioEvents;
+void OnTxDone( void );
+void OnTxTimeout( void );
 
 // Comment out for production to save power
 #define ENABLE_SERIAL_DEBUG
@@ -32,7 +46,7 @@ const uint32_t DEBOUNCE_MS = 300;  // 300ms debounce (allows 0.3s events)
 
 volatile bool user_button_pressed = false;
 
-// Interrupt Service Routines (keep them fast!)
+// Interrupt Service Routines
 void hatchISR() {
   hatch_changed = true;
 }
@@ -51,7 +65,7 @@ void setup() {
   delay(1000);
   Serial.println("=== Mailbox Sensor Starting ===");
   Serial.flush();
-  delay(10);  // Allow UART hardware to finish
+  delay(10);
 #endif
   
   // Initialize GPIO pins with pull-ups
@@ -69,12 +83,16 @@ void setup() {
   attachInterrupt(USER_BUTTON_PIN, userButtonISR, FALLING);
   
   // Initialize LoRa radio
-  Radio.Init(NULL);
-  Radio.SetPublicNetwork(false);  // Private network sync word 0x1424
-  Radio.SetChannel(LORA_FREQUENCY);
-  Radio.SetTxConfig(MODEM_LORA, LORA_POWER, 0, 0,
-                    LORA_SF, LORA_BW, LORA_CR,
-                    8, 0, true, 0, 0, false);  // preamble=8, CRC=true, iqInverted=false
+#ifdef ENABLE_SERIAL_DEBUG
+  RadioEvents.TxDone = OnTxDone;
+  RadioEvents.TxTimeout = OnTxTimeout;
+#endif
+  Radio.Init( &RadioEvents );
+  Radio.SetChannel(RF_FREQUENCY);
+  Radio.SetTxConfig( MODEM_LORA, TX_OUTPUT_POWER, 0, LORA_BANDWIDTH,
+                                   LORA_SPREADING_FACTOR, LORA_CODINGRATE,
+                                   LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
+                                   true, 0, 0, LORA_IQ_INVERSION_ON, TX_TIMEOUT_VALUE);
   Radio.Sleep();  // Put radio to sleep initially
   
 #ifdef ENABLE_SERIAL_DEBUG
@@ -84,7 +102,7 @@ void setup() {
                 last_hatch_state ? "CLOSED" : "OPEN",
                 last_door_state ? "CLOSED" : "OPEN");
   Serial.flush();
-  delay(10);  // Allow UART hardware to finish
+  delay(10);
 #endif
 }
 
@@ -112,7 +130,7 @@ void loop() {
                     hatch_open ? "OPEN" : "CLOSED",
                     door_open ? "OPEN" : "CLOSED");
       Serial.flush();
-      delay(10);  // Allow UART hardware to finish
+      delay(10);
 #endif
       
       // Send LoRa packet
@@ -156,7 +174,7 @@ void sendMailboxPacket(bool hatch_open, bool door_open) {
   // 5-byte packet: [NodeID][Type][Hatch][Door][Battery%]
   uint8_t packet[5];
   packet[0] = 0x01;                    // Node ID (mailbox)
-  packet[1] = 0x01;                    // Message type: status
+  packet[1] = 0x01;                    // Message type: mailbox status
   packet[2] = hatch_open ? 1 : 0;      // Hatch state
   packet[3] = door_open ? 1 : 0;       // Door state
   packet[4] = readBatteryPercent();    // Battery %
@@ -165,7 +183,7 @@ void sendMailboxPacket(bool hatch_open, bool door_open) {
   Radio.Send(packet, 5);
   
   // Wait for transmission to complete (typically <100ms at SF7)
-  delay(100);
+  delay(1000);
   
   // Put radio back to sleep
   Radio.Sleep();
@@ -173,7 +191,7 @@ void sendMailboxPacket(bool hatch_open, bool door_open) {
 #ifdef ENABLE_SERIAL_DEBUG
   Serial.println("LoRa packet transmitted!");
   Serial.flush();
-  delay(10);  // Allow UART hardware to finish
+  delay(10);
 #endif
 }
 
@@ -192,4 +210,14 @@ uint8_t readBatteryPercent() {
   if (percent < 0) percent = 0;
   
   return percent;
+}
+
+
+void OnTxDone( void ) {
+  Serial.println("TX done!");
+}
+
+void OnTxTimeout( void ) {
+    Radio.Sleep( );
+    Serial.println("TX Timeout......");
 }
