@@ -6,10 +6,10 @@
 #define REED_DOOR_PIN   GPIO2
 
 // LoRa configuration (Italy 868 MHz)
-#define LORA_FREQUENCY  868000000UL  // Hz
+#define LORA_FREQUENCY  868000000UL // Hz
 #define LORA_SF         7           // Spreading Factor 7
-#define LORA_BW         125E3       // Bandwidth 125 kHz
-#define LORA_CR         5           // Coding Rate 4/5
+#define LORA_BW         0           // Bandwidth 125 kHz
+#define LORA_CR         1           // Coding Rate 4/5
 #define LORA_POWER      22          // dBm (EU868 legal max: 25, device max: 22)
 
 // Mailbox states
