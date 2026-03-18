@@ -157,9 +157,16 @@ void loop() {
     delay(10);
 #endif
 
-    sendMailboxPacket(true, true);   // OPEN
+    // Read battery once and reuse for both test packets so values are consistent
+    uint8_t bat = readBatteryPercent();
+#ifdef ENABLE_SERIAL_DEBUG
+    Serial.printf("USER test battery: %u%%\n", bat);
+    Serial.flush();
+    delay(10);
+#endif
+    sendMailboxPacket(true, true, bat);   // OPEN
     delay(1000);
-    sendMailboxPacket(false, false); // CLOSED
+    sendMailboxPacket(false, false, bat); // CLOSED
   }
   
   // Enter deep sleep - wakes on GPIO interrupt
@@ -167,7 +174,7 @@ void loop() {
   lowPowerHandler();
 }
 
-void sendMailboxPacket(bool hatch_open, bool door_open) {
+void sendMailboxPacket(bool hatch_open, bool door_open, uint8_t batteryPercent /*= 0xFF - read inside if not provided */) {
   // Wake up radio for transmission
   Radio.Standby();
   
@@ -177,7 +184,7 @@ void sendMailboxPacket(bool hatch_open, bool door_open) {
   packet[1] = 0x01;                    // Message type: mailbox status
   packet[2] = hatch_open ? 1 : 0;      // Hatch state
   packet[3] = door_open ? 1 : 0;       // Door state
-  packet[4] = readBatteryPercent();    // Battery %
+  packet[4] = (batteryPercent == 0xFF) ? readBatteryPercent() : batteryPercent;
   
   // Transmit (Heltec CubeCell SX1262)
   Radio.Send(packet, 5);
@@ -197,19 +204,29 @@ void sendMailboxPacket(bool hatch_open, bool door_open) {
 
 uint8_t readBatteryPercent() {
   // CubeCell has built-in battery ADC
-  // Read ADC (0-4095 for 0-3.6V)
-  uint32_t adc = analogRead(ADC);
-  
+  // Read ADC (0-4095 for 0-3.6V).
+  // Strategy: discard the first sample (ADC mux / S/H settling), take two samples and average.
+  uint32_t adc1 = analogRead(ADC);           // discard / warm-up
+  delayMicroseconds(50);
+  uint32_t adc2 = analogRead(ADC);
+  delayMicroseconds(10);
+  uint32_t adc3 = analogRead(ADC);
+  uint32_t adc = (adc2 + adc3) / 2;
+
   // Convert to voltage (CubeCell specific)
-  float voltage = (adc * 3.6) / 4095.0;
-  
+  float voltage = (adc * 3.6f) / 4095.0f;
+
   // Li-SOCl2: 3.0V=0%, 3.6V=100%
-  uint8_t percent = (voltage - 3.0) * 100.0 / 0.6;
-  
+  int percent = (int)roundf((voltage - 3.0f) * 100.0f / 0.6f);
   if (percent > 100) percent = 100;
   if (percent < 0) percent = 0;
-  
-  return percent;
+
+#ifdef ENABLE_SERIAL_DEBUG
+  Serial.printf("ADC raw=%u (1=%u 2=%u 3=%u) -> %.3fV -> %d%%\n", (unsigned)adc, (unsigned)adc1, (unsigned)adc2, (unsigned)adc3, voltage, percent);
+  Serial.flush();
+#endif
+
+  return (uint8_t)percent;
 }
 
 
