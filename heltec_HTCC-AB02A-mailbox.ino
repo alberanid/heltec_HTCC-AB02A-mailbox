@@ -1,3 +1,8 @@
+/*
+ * LoRa mailbox sensor for the Heltec CubeCell HTCC-AB02A.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include "LoRaWan_APP.h"
 #include "Arduino.h"
 
